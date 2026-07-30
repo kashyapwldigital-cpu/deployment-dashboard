@@ -16,11 +16,6 @@ const DEPLOYMENT_SOURCES = [
     websiteUrl: "https://sandbox-new.tixstock.com",
   },
   {
-    name: "sandbox-pf.tixstock.com",
-    deploymentInfoUrl: "https://sandbox-pf.tixstock.com/deployment-info.json",
-    websiteUrl: "https://sandbox-pf.tixstock.com",
-  },
-  {
     name: "sandbox-tickets.likewizemoments.com",
     deploymentInfoUrl: "https://sandbox-tickets.likewizemoments.com/deployment-info.json",
     websiteUrl: "https://sandbox-tickets.likewizemoments.com",
