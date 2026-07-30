@@ -64,3 +64,38 @@ export default {
 Then set `VITE_DEPLOYMENT_PROXY_URL` to that Worker URL, for example:
 
 `https://deployment-proxy.your-subdomain.workers.dev/?target={target}`
+
+## One-call mode (reduce Worker requests)
+
+You can make the dashboard perform a single request per refresh by using a batch endpoint.
+
+Set:
+
+`VITE_DEPLOYMENT_BATCH_PROXY_URL=https://your-proxy-domain.example/api/deployment-info-batch`
+
+Expected request body:
+
+```json
+{
+  "sources": [
+    { "name": "dev.tixstock.com", "deploymentInfoUrl": "https://dev.tixstock.com/deployment-info.json" }
+  ]
+}
+```
+
+Expected response body:
+
+```json
+{
+  "results": [
+    {
+      "deploymentInfoUrl": "https://dev.tixstock.com/deployment-info.json",
+      "status": "online",
+      "payload": {
+        "branch": "feature/xyz",
+        "buildTime": "2026-07-30T10:00:00.000Z"
+      }
+    }
+  ]
+}
+```

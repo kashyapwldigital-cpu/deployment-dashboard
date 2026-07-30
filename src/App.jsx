@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const REFRESH_INTERVAL_MS = 30_000;
 const FETCH_TIMEOUT_MS = 8_000;
 const PROXY_URL_TEMPLATE = import.meta.env.VITE_DEPLOYMENT_PROXY_URL?.trim() || "";
+const BATCH_PROXY_URL = import.meta.env.VITE_DEPLOYMENT_BATCH_PROXY_URL?.trim() || "";
 
 // Add or update domains here.
 const DEPLOYMENT_SOURCES = [
@@ -157,7 +158,87 @@ const getDashboardFetchUrl = (deploymentInfoUrl) => {
   return deploymentInfoUrl;
 };
 
+const buildOnlineSnapshot = (source, payload) => ({
+  name: source.name,
+  websiteUrl: source.websiteUrl,
+  deploymentInfoUrl: source.deploymentInfoUrl,
+  status: "online",
+  branch: payload.branch || emptyRowData.branch,
+  buildTime: payload.buildTime || emptyRowData.buildTime,
+  apiUrl: payload.apiUrl || emptyRowData.apiUrl,
+  pfApiUrl: payload.pfApiUrl || emptyRowData.pfApiUrl,
+  firstName: payload.firstName || emptyRowData.firstName,
+  lastName: payload.lastName || emptyRowData.lastName,
+  gitUser: payload.gitUser || emptyRowData.gitUser,
+  gitEmail: payload.gitEmail || emptyRowData.gitEmail,
+  gitUserPhotoUrl: payload.gitUserPhotoUrl || emptyRowData.gitUserPhotoUrl,
+});
+
+const buildOfflineSnapshot = (source) => ({
+  name: source.name,
+  websiteUrl: source.websiteUrl,
+  deploymentInfoUrl: source.deploymentInfoUrl,
+  status: "offline",
+  ...emptyRowData,
+});
+
+const fetchPerSource = async () =>
+  Promise.all(
+    DEPLOYMENT_SOURCES.map(async (source) => {
+      try {
+        const payload = await fetchWithTimeout(
+          getDashboardFetchUrl(source.deploymentInfoUrl),
+          FETCH_TIMEOUT_MS,
+        );
+
+        return buildOnlineSnapshot(source, payload);
+      } catch {
+        return buildOfflineSnapshot(source);
+      }
+    }),
+  );
+
+const fetchViaBatchProxy = async () => {
+  const response = await fetch(BATCH_PROXY_URL, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
+    },
+    body: JSON.stringify({
+      sources: DEPLOYMENT_SOURCES.map((source) => ({
+        name: source.name,
+        deploymentInfoUrl: source.deploymentInfoUrl,
+      })),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Batch proxy HTTP ${response.status}`);
+  }
+
+  const payload = await response.json();
+  const results = Array.isArray(payload?.results) ? payload.results : [];
+  const resultByUrl = new Map(
+    results
+      .filter((result) => result?.deploymentInfoUrl)
+      .map((result) => [result.deploymentInfoUrl, result]),
+  );
+
+  return DEPLOYMENT_SOURCES.map((source) => {
+    const result = resultByUrl.get(source.deploymentInfoUrl);
+    if (!result) return buildOfflineSnapshot(source);
+    if (result.status === "offline") return buildOfflineSnapshot(source);
+
+    const resultPayload =
+      result.payload && typeof result.payload === "object" ? result.payload : result;
+    return buildOnlineSnapshot(source, resultPayload);
+  });
+};
+
 function App() {
+  const toolbarRef = useRef(null);
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState([]);
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
@@ -182,40 +263,16 @@ function App() {
   const loadDashboardData = useCallback(async () => {
     setLoading(true);
     try {
-      const snapshots = await Promise.all(
-        DEPLOYMENT_SOURCES.map(async (source) => {
-          try {
-            const payload = await fetchWithTimeout(
-              getDashboardFetchUrl(source.deploymentInfoUrl),
-              FETCH_TIMEOUT_MS,
-            );
-
-            return {
-              name: source.name,
-              websiteUrl: source.websiteUrl,
-              deploymentInfoUrl: source.deploymentInfoUrl,
-              status: "online",
-              branch: payload.branch || emptyRowData.branch,
-              buildTime: payload.buildTime || emptyRowData.buildTime,
-              apiUrl: payload.apiUrl || emptyRowData.apiUrl,
-              pfApiUrl: payload.pfApiUrl || emptyRowData.pfApiUrl,
-              firstName: payload.firstName || emptyRowData.firstName,
-              lastName: payload.lastName || emptyRowData.lastName,
-              gitUser: payload.gitUser || emptyRowData.gitUser,
-              gitEmail: payload.gitEmail || emptyRowData.gitEmail,
-              gitUserPhotoUrl: payload.gitUserPhotoUrl || emptyRowData.gitUserPhotoUrl,
-            };
-          } catch {
-            return {
-              name: source.name,
-              websiteUrl: source.websiteUrl,
-              deploymentInfoUrl: source.deploymentInfoUrl,
-              status: "offline",
-              ...emptyRowData,
-            };
-          }
-        }),
-      );
+      let snapshots = [];
+      if (BATCH_PROXY_URL) {
+        try {
+          snapshots = await fetchViaBatchProxy();
+        } catch {
+          snapshots = await fetchPerSource();
+        }
+      } else {
+        snapshots = await fetchPerSource();
+      }
 
       setRows(snapshots);
       setLastRefreshAt(new Date());
@@ -230,6 +287,27 @@ function App() {
     const intervalId = setInterval(loadDashboardData, REFRESH_INTERVAL_MS);
     return () => clearInterval(intervalId);
   }, [loadDashboardData]);
+
+  useEffect(() => {
+    const updateToolbarHeightVar = () => {
+      if (!toolbarRef.current) return;
+      const height = Math.ceil(toolbarRef.current.getBoundingClientRect().height);
+      document.documentElement.style.setProperty("--toolbar-sticky-height", `${height}px`);
+    };
+
+    updateToolbarHeightVar();
+    window.addEventListener("resize", updateToolbarHeightVar);
+
+    const resizeObserver = new ResizeObserver(updateToolbarHeightVar);
+    if (toolbarRef.current) {
+      resizeObserver.observe(toolbarRef.current);
+    }
+
+    return () => {
+      window.removeEventListener("resize", updateToolbarHeightVar);
+      resizeObserver.disconnect();
+    };
+  }, []);
 
   const filteredRows = useMemo(() => {
     const search = query.trim().toLowerCase();
@@ -350,7 +428,7 @@ Email: ${row.gitEmail || "N/A"}`;
         </button>
       </header>
 
-      <section className="toolbar">
+      <section className="toolbar" ref={toolbarRef}>
         <label className="search">
           <span>Search:</span>
           <input
@@ -420,10 +498,10 @@ Email: ${row.gitEmail || "N/A"}`;
           <tbody>
             {sortedRows.map((row) => (
               <tr key={row.name}>
-                <td>{row.name}</td>
-                <td>{row.branch}</td>
-                <td>{formatTimestamp(row.buildTime)}</td>
-                <td>
+                <td data-label="Name">{row.name}</td>
+                <td data-label="Branch">{row.branch}</td>
+                <td data-label="Build Time">{formatTimestamp(row.buildTime)}</td>
+                <td data-label="Build Made By">
                   <div className="builder-cell">
                     {row.gitUserPhotoUrl ? (
                       <img
@@ -472,7 +550,7 @@ Email: ${row.gitEmail || "N/A"}`;
                     ) : null}
                   </div>
                 </td>
-                <td>
+                <td data-label="API URLs">
                   <div className="api-urls-cell">
                     <div className="api-url-row">
                       <span className="api-url-label">API:</span>
@@ -508,14 +586,14 @@ Email: ${row.gitEmail || "N/A"}`;
                     </div>
                   </div>
                 </td>
-                <td>
+                <td data-label="Status">
                   {row.status === "online" ? (
                     <span className="status online">🟢 Online</span>
                   ) : (
                     <span className="status offline">🔴 Offline</span>
                   )}
                 </td>
-                <td>
+                <td data-label="Open">
                   <a
                     href={row.websiteUrl}
                     target="_blank"
@@ -528,14 +606,14 @@ Email: ${row.gitEmail || "N/A"}`;
               </tr>
             ))}
             {showInitialLoader ? (
-              <tr>
+              <tr className="table-message-row">
                 <td colSpan={7} className="loading-row">
                   Loading deployments...
                 </td>
               </tr>
             ) : null}
             {showNoResults ? (
-              <tr>
+              <tr className="table-message-row">
                 <td colSpan={7} className="no-results">
                   No matching deployments found.
                 </td>
