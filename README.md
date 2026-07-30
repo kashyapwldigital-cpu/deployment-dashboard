@@ -1,16 +1,66 @@
-# React + Vite
+# Sandbox Deployment Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+## Why CORS errors happen on deployed builds
 
-Currently, two official plugins are available:
+When this app runs on GitHub Pages, it is a static frontend only.  
+Browser requests to remote `deployment-info.json` files are blocked unless each remote domain sends:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+`Access-Control-Allow-Origin: https://kashyapwldigital-cpu.github.io`
 
-## React Compiler
+Local development works because Vite uses a local server proxy, but that proxy does not exist on GitHub Pages.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Production-safe fix (recommended)
 
-## Expanding the Oxlint configuration
+Use a server-side proxy endpoint and configure the app to call that proxy in production.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+1. Copy `.env.example` to `.env`.
+2. Set:
+
+`VITE_DEPLOYMENT_PROXY_URL=https://your-proxy-domain.example/api/deployment-info?target={target}`
+
+3. Build and deploy.
+
+`{target}` is replaced by each source URL automatically.
+
+## Quick Cloudflare Worker proxy example
+
+```js
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    const target = url.searchParams.get("target");
+
+    if (!target) {
+      return new Response(JSON.stringify({ error: "Missing target query param." }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    const parsedTarget = new URL(target);
+    if (!["http:", "https:"].includes(parsedTarget.protocol)) {
+      return new Response(JSON.stringify({ error: "Invalid target protocol." }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    const upstream = await fetch(parsedTarget.toString(), {
+      headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+    });
+
+    return new Response(await upstream.text(), {
+      status: upstream.status,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+        "access-control-allow-origin": "*",
+      },
+    });
+  },
+};
+```
+
+Then set `VITE_DEPLOYMENT_PROXY_URL` to that Worker URL, for example:
+
+`https://deployment-proxy.your-subdomain.workers.dev/?target={target}`

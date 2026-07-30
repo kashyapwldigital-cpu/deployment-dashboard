@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 const REFRESH_INTERVAL_MS = 30_000;
 const FETCH_TIMEOUT_MS = 8_000;
+const PROXY_URL_TEMPLATE = import.meta.env.VITE_DEPLOYMENT_PROXY_URL?.trim() || "";
 
 // Add or update domains here.
 const DEPLOYMENT_SOURCES = [
@@ -144,6 +145,15 @@ const getDashboardFetchUrl = (deploymentInfoUrl) => {
   if (import.meta.env.DEV) {
     return `/api/deployment-info?target=${encodeURIComponent(deploymentInfoUrl)}`;
   }
+  if (PROXY_URL_TEMPLATE) {
+    if (PROXY_URL_TEMPLATE.includes("{target}")) {
+      return PROXY_URL_TEMPLATE.replace("{target}", encodeURIComponent(deploymentInfoUrl));
+    }
+
+    const proxyUrl = new URL(PROXY_URL_TEMPLATE);
+    proxyUrl.searchParams.set("target", deploymentInfoUrl);
+    return proxyUrl.toString();
+  }
   return deploymentInfoUrl;
 };
 
@@ -152,6 +162,7 @@ function App() {
   const [rows, setRows] = useState([]);
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [sortConfig, setSortConfig] = useState({
     key: "default",
     direction: "asc",
@@ -170,44 +181,48 @@ function App() {
 
   const loadDashboardData = useCallback(async () => {
     setLoading(true);
-    const snapshots = await Promise.all(
-      DEPLOYMENT_SOURCES.map(async (source) => {
-        try {
-          const payload = await fetchWithTimeout(
-            getDashboardFetchUrl(source.deploymentInfoUrl),
-            FETCH_TIMEOUT_MS,
-          );
+    try {
+      const snapshots = await Promise.all(
+        DEPLOYMENT_SOURCES.map(async (source) => {
+          try {
+            const payload = await fetchWithTimeout(
+              getDashboardFetchUrl(source.deploymentInfoUrl),
+              FETCH_TIMEOUT_MS,
+            );
 
-          return {
-            name: source.name,
-            websiteUrl: source.websiteUrl,
-            deploymentInfoUrl: source.deploymentInfoUrl,
-            status: "online",
-            branch: payload.branch || emptyRowData.branch,
-            buildTime: payload.buildTime || emptyRowData.buildTime,
-            apiUrl: payload.apiUrl || emptyRowData.apiUrl,
-            pfApiUrl: payload.pfApiUrl || emptyRowData.pfApiUrl,
-            firstName: payload.firstName || emptyRowData.firstName,
-            lastName: payload.lastName || emptyRowData.lastName,
-            gitUser: payload.gitUser || emptyRowData.gitUser,
-            gitEmail: payload.gitEmail || emptyRowData.gitEmail,
-            gitUserPhotoUrl: payload.gitUserPhotoUrl || emptyRowData.gitUserPhotoUrl,
-          };
-        } catch {
-          return {
-            name: source.name,
-            websiteUrl: source.websiteUrl,
-            deploymentInfoUrl: source.deploymentInfoUrl,
-            status: "offline",
-            ...emptyRowData,
-          };
-        }
-      }),
-    );
+            return {
+              name: source.name,
+              websiteUrl: source.websiteUrl,
+              deploymentInfoUrl: source.deploymentInfoUrl,
+              status: "online",
+              branch: payload.branch || emptyRowData.branch,
+              buildTime: payload.buildTime || emptyRowData.buildTime,
+              apiUrl: payload.apiUrl || emptyRowData.apiUrl,
+              pfApiUrl: payload.pfApiUrl || emptyRowData.pfApiUrl,
+              firstName: payload.firstName || emptyRowData.firstName,
+              lastName: payload.lastName || emptyRowData.lastName,
+              gitUser: payload.gitUser || emptyRowData.gitUser,
+              gitEmail: payload.gitEmail || emptyRowData.gitEmail,
+              gitUserPhotoUrl: payload.gitUserPhotoUrl || emptyRowData.gitUserPhotoUrl,
+            };
+          } catch {
+            return {
+              name: source.name,
+              websiteUrl: source.websiteUrl,
+              deploymentInfoUrl: source.deploymentInfoUrl,
+              status: "offline",
+              ...emptyRowData,
+            };
+          }
+        }),
+      );
 
-    setRows(snapshots);
-    setLastRefreshAt(new Date());
-    setLoading(false);
+      setRows(snapshots);
+      setLastRefreshAt(new Date());
+    } finally {
+      setLoading(false);
+      setInitialLoadComplete(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -323,10 +338,16 @@ Email: ${row.gitEmail || "N/A"}`;
     }
   };
 
+  const showInitialLoader = loading && !initialLoadComplete;
+  const showNoResults = initialLoadComplete && !filteredRows.length;
+
   return (
     <main className="dashboard" onClick={() => setActiveTooltipRow("")}>
       <header className="header">
         <h1>Sandbox Deployment Dashboard</h1>
+        <button type="button" className="sync-btn" onClick={loadDashboardData} disabled={loading}>
+          {loading ? "Syncing..." : "Sync Data"}
+        </button>
       </header>
 
       <section className="toolbar">
@@ -506,7 +527,14 @@ Email: ${row.gitEmail || "N/A"}`;
                 </td>
               </tr>
             ))}
-            {!filteredRows.length ? (
+            {showInitialLoader ? (
+              <tr>
+                <td colSpan={7} className="loading-row">
+                  Loading deployments...
+                </td>
+              </tr>
+            ) : null}
+            {showNoResults ? (
               <tr>
                 <td colSpan={7} className="no-results">
                   No matching deployments found.

@@ -1,6 +1,8 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+
+
 const deploymentInfoProxyPlugin = () => ({
   name: "deployment-info-proxy",
   configureServer(server) {
@@ -57,4 +59,5 @@ const deploymentInfoProxyPlugin = () => ({
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), deploymentInfoProxyPlugin()],
+    base: '/deployment-dashboard/',
 });
