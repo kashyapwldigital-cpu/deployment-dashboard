@@ -97,6 +97,16 @@ const DEPLOYMENT_SOURCES = [
     deploymentInfoUrl: "https://uat.tixstock.com/deployment-info.json",
     websiteUrl: "https://uat.tixstock.com",
   },
+  {
+    name: "preprod.tixstock.com",
+    deploymentInfoUrl: "https://preprod.tixstock.com/deployment-info.json",
+    websiteUrl: "https://preprod.tixstock.com",
+  },
+  {
+    name: "preprod.tx-trade.com",
+    deploymentInfoUrl: "https://preprod.tx-trade.com/deployment-info.json",
+    websiteUrl: "https://preprod.tx-trade.com",
+  },
 ];
 
 const emptyRowData = {
